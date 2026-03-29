@@ -42,6 +42,24 @@ import {
   type InterviewFeedback 
 } from './services/geminiService';
 import Markdown from 'react-markdown';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  type User,
+  doc,
+  setDoc,
+  getDoc,
+  collection,
+  addDoc,
+  updateDoc,
+  Timestamp,
+  handleFirestoreError,
+  OperationType
+} from './firebase';
 
 type AppState = 'landing' | 'loading' | 'interview' | 'feedback';
 
@@ -53,6 +71,8 @@ interface InterviewHistoryItem {
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [state, setState] = useState<AppState>('landing');
   const [config, setConfig] = useState<InterviewConfig>({
     company: '',
@@ -71,10 +91,54 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(true);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [showResources, setShowResources] = useState(false);
+  const [currentInterviewId, setCurrentInterviewId] = useState<string | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUser(user);
+        // Sync user profile to Firestore
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL,
+            createdAt: Timestamp.now()
+          }, { merge: true });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+        }
+      } else {
+        setUser(null);
+      }
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignIn = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      setError('Failed to sign in. Please try again.');
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      resetInterview();
+    } catch (err) {
+      setError('Failed to sign out.');
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
@@ -224,6 +288,25 @@ export default function App() {
     try {
       const qs = await generateInitialQuestions(config);
       setQuestions(qs);
+      
+      // Create interview session in Firestore if logged in
+      if (user) {
+        try {
+          const docRef = await addDoc(collection(db, 'interviews'), {
+            uid: user.uid,
+            company: config.company,
+            role: config.role,
+            difficulty: config.difficulty,
+            status: 'started',
+            createdAt: Timestamp.now(),
+            history: []
+          });
+          setCurrentInterviewId(docRef.id);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, 'interviews');
+        }
+      }
+      
       setState('interview');
     } catch (err) {
       setError('Failed to start interview. Please try again.');
@@ -248,15 +331,41 @@ export default function App() {
         score: evaluation.score
       };
       
-      setHistory(prev => [...prev, newHistoryItem]);
+      const updatedHistory = [...history, newHistoryItem];
+      setHistory(updatedHistory);
       
+      // Update Firestore history
+      if (user && currentInterviewId) {
+        try {
+          await updateDoc(doc(db, 'interviews', currentInterviewId), {
+            history: updatedHistory
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `interviews/${currentInterviewId}`);
+        }
+      }
+
       if (currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(prev => prev + 1);
       } else {
         // End of interview
         setState('loading');
-        const report = await generateFinalReport(config, [...history, newHistoryItem]);
+        const report = await generateFinalReport(config, updatedHistory);
         setFinalReport(report);
+        
+        // Update final report in Firestore
+        if (user && currentInterviewId) {
+          try {
+            await updateDoc(doc(db, 'interviews', currentInterviewId), {
+              status: 'completed',
+              score: report.score,
+              finalReport: report
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, `interviews/${currentInterviewId}`);
+          }
+        }
+        
         setState('feedback');
       }
     } catch (err) {
@@ -288,11 +397,47 @@ export default function App() {
             <span className="font-bold text-xl tracking-tight">InterviewAI</span>
           </div>
           <div className="hidden sm:flex items-center gap-6 text-sm font-medium text-gray-500">
-            <a href="#" className="hover:text-blue-600 transition-colors">How it works</a>
-            <a href="#" className="hover:text-blue-600 transition-colors">Resources</a>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-all shadow-sm">
-              Sign In
+            <button 
+              onClick={() => setShowHowItWorks(true)}
+              className="hover:text-blue-600 transition-colors"
+            >
+              How it works
             </button>
+            <button 
+              onClick={() => setShowResources(true)}
+              className="hover:text-blue-600 transition-colors"
+            >
+              Resources
+            </button>
+            {isAuthLoading ? (
+              <div className="w-8 h-8 rounded-full bg-gray-100 animate-pulse" />
+            ) : user ? (
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <img 
+                    src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'U')}&background=random`} 
+                    alt="" 
+                    className="w-8 h-8 rounded-full border border-gray-200" 
+                    referrerPolicy="no-referrer"
+                  />
+                  <span className="text-sm font-bold text-gray-700 hidden sm:inline">{user.displayName || 'User'}</span>
+                </div>
+                <button 
+                  onClick={handleSignOut}
+                  className="px-4 py-2 text-sm font-bold text-gray-500 hover:text-red-600 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={handleSignIn}
+                className="px-4 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-all shadow-sm flex items-center gap-2"
+              >
+                <User className="w-4 h-4" />
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -732,6 +877,123 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* How It Works Modal */}
+        <AnimatePresence>
+          {showHowItWorks && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowHowItWorks(false)}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative bg-white w-full max-w-2xl rounded-[32px] p-8 shadow-2xl space-y-8 overflow-hidden"
+              >
+                <div className="flex justify-between items-center">
+                  <h2 className="text-3xl font-extrabold">How it works</h2>
+                  <button onClick={() => setShowHowItWorks(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                
+                <div className="grid sm:grid-cols-2 gap-8">
+                  {[
+                    {
+                      icon: <Building2 className="w-6 h-6 text-blue-600" />,
+                      title: "1. Configure",
+                      desc: "Enter your target company, role, and experience level to get tailored questions."
+                    },
+                    {
+                      icon: <FileText className="w-6 h-6 text-blue-600" />,
+                      title: "2. Personalize",
+                      desc: "Upload your resume to let the AI probe deeper into your specific skills and projects."
+                    },
+                    {
+                      icon: <Mic className="w-6 h-6 text-blue-600" />,
+                      title: "3. Practice",
+                      desc: "Engage in a realistic conversation by typing or talking. Get real-time AI evaluation."
+                    },
+                    {
+                      icon: <Trophy className="w-6 h-6 text-blue-600" />,
+                      title: "4. Improve",
+                      desc: "Receive a detailed performance report with scores, strengths, and improvement tips."
+                    }
+                  ].map((step, i) => (
+                    <div key={i} className="space-y-3">
+                      <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center">
+                        {step.icon}
+                      </div>
+                      <h3 className="font-bold text-lg">{step.title}</h3>
+                      <p className="text-sm text-gray-500 leading-relaxed">{step.desc}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <button 
+                  onClick={() => setShowHowItWorks(false)}
+                  className="w-full py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition-all"
+                >
+                  Got it, let's start!
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Resources Modal */}
+        <AnimatePresence>
+          {showResources && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowResources(false)}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative bg-white w-full max-w-2xl rounded-[32px] p-8 shadow-2xl space-y-6"
+              >
+                <div className="flex justify-between items-center">
+                  <h2 className="text-3xl font-extrabold">Interview Resources</h2>
+                  <button onClick={() => setShowResources(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {[
+                    { title: "The STAR Method Guide", desc: "Learn how to structure behavioral answers effectively.", tag: "Behavioral" },
+                    { title: "System Design Roadmap", desc: "Key concepts for technical architectural interviews.", tag: "Technical" },
+                    { title: "Salary Negotiation Tips", desc: "How to handle the compensation conversation.", tag: "Career" },
+                    { title: "Common Soft Skills Questions", desc: "Top 20 questions every candidate should prepare for.", tag: "General" }
+                  ].map((res, i) => (
+                    <div key={i} className="p-4 border border-gray-100 rounded-2xl hover:border-blue-200 hover:bg-blue-50/30 transition-all cursor-pointer group">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <h3 className="font-bold group-hover:text-blue-600 transition-colors">{res.title}</h3>
+                          <p className="text-sm text-gray-500">{res.desc}</p>
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 bg-gray-100 rounded-md text-gray-400">
+                          {res.tag}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            </div>
           )}
         </AnimatePresence>
       </main>

@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user information and preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user." },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string", "format": "uri" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "InterviewSession": {
+      "title": "Interview Session",
+      "description": "Stores details of a mock interview session.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner of the session." },
+        "company": { "type": "string" },
+        "role": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "status": { "type": "string", "enum": ["started", "completed"] },
+        "score": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "question": { "type": "string" },
+              "answer": { "type": "string" },
+              "feedback": { "type": "string" },
+              "score": { "type": "number" }
+            }
+          }
+        },
+        "finalReport": {
+          "type": "object",
+          "properties": {
+            "score": { "type": "number" },
+            "strengths": { "type": "array", "items": { "type": "string" } },
+            "improvements": { "type": "array", "items": { "type": "string" } },
+            "overallFeedback": { "type": "string" }
+          }
+        }
+      },
+      "required": ["uid", "company", "role", "createdAt", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents."
+    },
+    "/interviews/{interviewId}": {
+      "schema": "InterviewSession",
+      "description": "Mock interview session documents."
+    }
+  }
+}
