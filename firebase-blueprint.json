@@ -48,6 +48,21 @@
         }
       },
       "required": ["uid", "company", "role", "createdAt", "status"]
+    },
+    "SavedConfig": {
+      "title": "Saved Configuration",
+      "description": "Stores a reusable interview configuration.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner of the config." },
+        "name": { "type": "string", "description": "Name of the saved config." },
+        "company": { "type": "string" },
+        "role": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "persona": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "company", "role", "difficulty", "persona", "createdAt"]
     }
   },
   "firestore": {
@@ -58,6 +73,10 @@
     "/interviews/{interviewId}": {
       "schema": "InterviewSession",
       "description": "Mock interview session documents."
+    },
+    "/savedConfigs/{configId}": {
+      "schema": "SavedConfig",
+      "description": "Saved interview configuration documents."
     }
   }
 }

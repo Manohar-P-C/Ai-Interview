@@ -28,6 +28,17 @@ service cloud.firestore {
     //   - history: list (of objects)
     //   - finalReport: map
     //
+    // Collection: savedConfigs
+    // Document ID: configId (Auto-generated)
+    // Fields:
+    //   - uid: string (required, owner)
+    //   - name: string (required)
+    //   - company: string (required)
+    //   - role: string (required)
+    //   - difficulty: string
+    //   - persona: string
+    //   - createdAt: timestamp
+    //
     // ===============================================================
 
     // ===============================================================
@@ -74,6 +85,14 @@ service cloud.firestore {
              data.status in ['started', 'completed'];
     }
 
+    function isValidSavedConfig(data) {
+      return data.keys().hasAll(['uid', 'name', 'company', 'role', 'difficulty', 'persona', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.company is string && data.company.size() > 0 && data.company.size() < 100 &&
+             data.role is string && data.role.size() > 0 && data.role.size() < 100;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -89,6 +108,14 @@ service cloud.firestore {
       allow read: if isDocOwner() || isAdmin();
       allow create: if isAuthenticated() && isValidInterview(request.resource.data);
       allow update: if isDocOwner() && isValidInterview(request.resource.data) &&
+                      request.resource.data.uid == resource.data.uid;
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /savedConfigs/{configId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidSavedConfig(request.resource.data);
+      allow update: if isDocOwner() && isValidSavedConfig(request.resource.data) &&
                       request.resource.data.uid == resource.data.uid;
       allow delete: if isDocOwner() || isAdmin();
     }

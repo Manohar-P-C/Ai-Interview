@@ -1,5 +1,5 @@
 {
   "name": "InterviewAI",
   "description": "AI-powered mock interview platform for any company and role.",
-  "requestFramePermissions": ["microphone"]
+  "requestFramePermissions": ["microphone", "camera"]
 }
