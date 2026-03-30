@@ -15,7 +15,7 @@ import {
   AlertCircle,
   Loader2,
   ChevronRight,
-  User,
+  User as UserIcon,
   Bot,
   RefreshCcw,
   Star,
@@ -396,35 +396,38 @@ export default function App() {
             </div>
             <span className="font-bold text-xl tracking-tight">InterviewAI</span>
           </div>
-          <div className="hidden sm:flex items-center gap-6 text-sm font-medium text-gray-500">
-            <button 
-              onClick={() => setShowHowItWorks(true)}
-              className="hover:text-blue-600 transition-colors"
-            >
-              How it works
-            </button>
-            <button 
-              onClick={() => setShowResources(true)}
-              className="hover:text-blue-600 transition-colors"
-            >
-              Resources
-            </button>
+          <div className="flex items-center gap-3 sm:gap-6">
+            <div className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-500">
+              <button 
+                onClick={() => setShowHowItWorks(true)}
+                className="hover:text-blue-600 transition-colors"
+              >
+                How it works
+              </button>
+              <button 
+                onClick={() => setShowResources(true)}
+                className="hover:text-blue-600 transition-colors"
+              >
+                Resources
+              </button>
+            </div>
+            
             {isAuthLoading ? (
               <div className="w-8 h-8 rounded-full bg-gray-100 animate-pulse" />
             ) : user ? (
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 sm:gap-4">
                 <div className="flex items-center gap-2">
                   <img 
                     src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || 'U')}&background=random`} 
                     alt="" 
-                    className="w-8 h-8 rounded-full border border-gray-200" 
+                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border border-gray-200" 
                     referrerPolicy="no-referrer"
                   />
-                  <span className="text-sm font-bold text-gray-700 hidden sm:inline">{user.displayName || 'User'}</span>
+                  <span className="text-xs sm:text-sm font-bold text-gray-700 hidden sm:inline">{user.displayName || 'User'}</span>
                 </div>
                 <button 
                   onClick={handleSignOut}
-                  className="px-4 py-2 text-sm font-bold text-gray-500 hover:text-red-600 transition-colors"
+                  className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-bold text-gray-500 hover:text-red-600 transition-colors"
                 >
                   Sign Out
                 </button>
@@ -432,9 +435,9 @@ export default function App() {
             ) : (
               <button 
                 onClick={handleSignIn}
-                className="px-4 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-all shadow-sm flex items-center gap-2"
+                className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white text-xs sm:text-sm rounded-full hover:bg-blue-700 transition-all shadow-sm flex items-center gap-1.5 sm:gap-2"
               >
-                <User className="w-4 h-4" />
+                <UserIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 Sign In
               </button>
             )}
@@ -686,7 +689,7 @@ export default function App() {
                           {item.answer}
                         </div>
                         <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
-                          <User className="w-5 h-5 text-gray-600" />
+                          <UserIcon className="w-5 h-5 text-gray-600" />
                         </div>
                       </div>
                       <div className="flex gap-4 pl-12">
