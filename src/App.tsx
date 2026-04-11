@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { jsPDF } from 'jspdf';
 import { Toaster, toast } from 'sonner';
 import { 
   Building2, 
@@ -68,6 +69,8 @@ import {
   generatePreparationPlan,
   generateBlitzPrep,
   calculateSkillTree,
+  generateResumeQuestion,
+  generateResumeFromAnswers,
   type InterviewConfig, 
   type InterviewQuestion,
   type InterviewFeedback,
@@ -108,7 +111,7 @@ import {
   OperationType
 } from './firebase';
 
-type AppState = 'landing' | 'loading' | 'interview' | 'feedback' | 'history' | 'preparation' | 'blitz';
+type AppState = 'landing' | 'loading' | 'interview' | 'feedback' | 'history' | 'preparation' | 'blitz' | 'resume-builder';
 
 interface InterviewHistoryItem {
   question: string;
@@ -174,6 +177,14 @@ export default function App() {
   const [showVideo, setShowVideo] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Resume Builder State
+  const [resumeQuestions, setResumeQuestions] = useState<{ question: string; answer: string }[]>([]);
+  const [currentResumeQuestion, setCurrentResumeQuestion] = useState("");
+  const [resumeAnswer, setResumeAnswer] = useState("");
+  const [isGeneratingResumeQuestion, setIsGeneratingResumeQuestion] = useState(false);
+  const [isGeneratingFinalResume, setIsGeneratingFinalResume] = useState(false);
+  const [finalResumeMarkdown, setFinalResumeMarkdown] = useState("");
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -227,31 +238,6 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  useEffect(() => {
-    if (!user) {
-      setSavedConfigs([]);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'savedConfigs'),
-      where('uid', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const configs: SavedConfig[] = [];
-      snapshot.forEach((doc) => {
-        configs.push({ id: doc.id, ...doc.data() } as SavedConfig);
-      });
-      setSavedConfigs(configs);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'savedConfigs');
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
   const handleSignIn = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
@@ -267,6 +253,70 @@ export default function App() {
     } catch (err) {
       setError('Failed to sign out.');
     }
+  };
+
+  const startResumeBuilder = async () => {
+    setState('resume-builder');
+    setResumeQuestions([]);
+    setFinalResumeMarkdown("");
+    setIsGeneratingResumeQuestion(true);
+    try {
+      const firstQuestion = await generateResumeQuestion([]);
+      setCurrentResumeQuestion(firstQuestion);
+    } catch (err) {
+      toast.error("Failed to start resume builder");
+    } finally {
+      setIsGeneratingResumeQuestion(false);
+    }
+  };
+
+  const handleResumeAnswer = async () => {
+    if (!resumeAnswer.trim()) return;
+
+    const newHistory = [...resumeQuestions, { question: currentResumeQuestion, answer: resumeAnswer }];
+    setResumeQuestions(newHistory);
+    setResumeAnswer("");
+
+    if (currentResumeQuestion.toLowerCase().includes("generate it now?")) {
+      setIsGeneratingFinalResume(true);
+      try {
+        const resume = await generateResumeFromAnswers(newHistory);
+        setFinalResumeMarkdown(resume);
+      } catch (err) {
+        toast.error("Failed to generate resume");
+      } finally {
+        setIsGeneratingFinalResume(false);
+      }
+    } else {
+      setIsGeneratingResumeQuestion(true);
+      try {
+        const nextQuestion = await generateResumeQuestion(newHistory);
+        setCurrentResumeQuestion(nextQuestion);
+      } catch (err) {
+        toast.error("Failed to get next question");
+      } finally {
+        setIsGeneratingResumeQuestion(false);
+      }
+    }
+  };
+
+  const downloadResumePDF = () => {
+    if (!finalResumeMarkdown) return;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 20;
+    const contentWidth = pageWidth - 2 * margin;
+    
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('RESUME', pageWidth / 2, 20, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(finalResumeMarkdown.replace(/#/g, '').replace(/\*/g, ''), contentWidth);
+    doc.text(lines, margin, 35);
+    doc.save('My_Resume.pdf');
+    toast.success('Resume downloaded as PDF');
   };
 
   useEffect(() => {
@@ -731,42 +781,169 @@ export default function App() {
   const downloadReport = () => {
     if (!finalReport) return;
 
-    const reportText = `
-INTERVIEW REPORT - ${config.company} (${config.role})
-==================================================
-Date: ${new Date().toLocaleDateString()}
-Difficulty: ${config.difficulty}
-Persona: ${config.persona}
-Overall Score: ${finalReport.score}/10
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    const contentWidth = pageWidth - 2 * margin;
+    let y = 20;
 
-STRENGTHS:
-${finalReport.strengths.map(s => `- ${s}`).join('\n')}
+    const addText = (text: string, fontSize = 12, isBold = false, color = [26, 26, 26]) => {
+      doc.setFontSize(fontSize);
+      doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+      doc.setTextColor(color[0], color[1], color[2]);
+      const lines = doc.splitTextToSize(text, contentWidth);
+      
+      if (y + lines.length * (fontSize * 0.5) > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+        addFooter();
+      }
+      
+      doc.text(lines, margin, y);
+      y += lines.length * (fontSize * 0.5) + 5;
+    };
 
-IMPROVEMENTS:
-${finalReport.improvements.map(i => `- ${i}`).join('\n')}
+    const addFooter = () => {
+      const pageCount = (doc as any).internal.getNumberOfPages();
+      doc.setFontSize(10);
+      doc.setTextColor(150, 150, 150);
+      doc.text(`Page ${pageCount}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      doc.text('interviewed by INTERVIEWAI', pageWidth - margin, pageHeight - 10, { align: 'right' });
+    };
 
-OVERALL FEEDBACK:
-${finalReport.overallFeedback}
+    const addSectionHeader = (title: string) => {
+      if (y + 20 > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+        addFooter();
+      }
+      doc.setFillColor(248, 249, 250);
+      doc.rect(margin, y, contentWidth, 10, 'F');
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(37, 99, 235);
+      doc.text(title, margin + 2, y + 7);
+      y += 15;
+    };
 
-DETAILED HISTORY:
-${history.map((item, index) => `
-Question ${index + 1}: ${item.question}
-Category: ${item.category}
-Your Answer: ${item.answer}
-Feedback: ${item.feedback}
-Score: ${item.score}/10
-`).join('\n')}
-    `.trim();
+    // Header with Logo
+    doc.setFillColor(37, 99, 235);
+    doc.rect(margin, y, 10, 10, 'F');
+    doc.setFontSize(24);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(26, 26, 26);
+    doc.text('InterviewAI', margin + 12, y + 8);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text('interviewed by INTERVIEWAI', pageWidth - margin, y + 8, { align: 'right' });
+    
+    y += 20;
 
-    const blob = new Blob([reportText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Interview_Report_${config.company.replace(/\s+/g, '_')}_${config.role.replace(/\s+/g, '_')}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Report Title
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(26, 26, 26);
+    doc.text(`INTERVIEW REPORT`, margin, y);
+    y += 10;
+    
+    doc.setFontSize(14);
+    doc.setTextColor(37, 99, 235);
+    doc.text(`${config.company} - ${config.role}`, margin, y);
+    y += 15;
+
+    // Summary Info
+    doc.setDrawColor(229, 231, 235);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 10;
+
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y);
+    doc.text(`Difficulty: ${config.difficulty}`, margin + 60, y);
+    doc.text(`Persona: ${config.persona}`, margin + 120, y);
+    y += 15;
+
+    // Score Badge
+    doc.setFillColor(37, 99, 235);
+    doc.roundedRect(margin, y, 50, 20, 3, 3, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.text('OVERALL SCORE', margin + 25, y + 7, { align: 'center' });
+    doc.setFontSize(16);
+    doc.text(`${finalReport.score}/10`, margin + 25, y + 15, { align: 'center' });
+    y += 30;
+
+    // Strengths
+    addSectionHeader('STRENGTHS');
+    finalReport.strengths.forEach(s => addText(`• ${s}`, 11));
+    y += 5;
+
+    // Improvements
+    addSectionHeader('AREAS FOR IMPROVEMENT');
+    finalReport.improvements.forEach(i => addText(`• ${i}`, 11));
+    y += 5;
+
+    // Overall Feedback
+    addSectionHeader('OVERALL FEEDBACK');
+    addText(finalReport.overallFeedback, 11);
+    y += 10;
+
+    // Detailed History
+    addSectionHeader('DETAILED INTERVIEW LOG');
+    history.forEach((item, index) => {
+      if (y + 40 > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+        addFooter();
+      }
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(26, 26, 26);
+      doc.text(`Q${index + 1}: ${item.question}`, margin, y);
+      y += 7;
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Category: ${item.category}`, margin, y);
+      y += 7;
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(26, 26, 26);
+      doc.text('Your Answer:', margin, y);
+      y += 5;
+      addText(item.answer, 10, false, [75, 85, 99]);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(26, 26, 26);
+      doc.text('AI Feedback:', margin, y);
+      y += 5;
+      addText(item.feedback, 10, false, [37, 99, 235]);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      if (item.score >= 7) {
+        doc.setTextColor(22, 163, 74);
+      } else {
+        doc.setTextColor(220, 38, 38);
+      }
+      doc.text(`Question Score: ${item.score}/10`, margin, y);
+      y += 10;
+      
+      doc.setDrawColor(243, 244, 246);
+      doc.line(margin, y, pageWidth - margin, y);
+      y += 10;
+    });
+
+    addFooter();
+
+    doc.save(`Interview_Report_${config.company.replace(/\s+/g, '_')}_${config.role.replace(/\s+/g, '_')}.pdf`);
+    toast.success('Report downloaded as PDF');
   };
 
   return (
@@ -796,16 +973,42 @@ Score: ${item.score}/10
                 Resources
               </button>
               {user && (
-                <button 
-                  onClick={() => setState('history')}
-                  className={cn(
-                    "hover:text-blue-600 transition-colors flex items-center gap-1.5",
-                    state === 'history' && "text-blue-600"
+                <>
+                  <button 
+                    onClick={() => setState('history')}
+                    className={cn(
+                      "hover:text-blue-600 transition-colors flex items-center gap-1.5",
+                      state === 'history' && "text-blue-600"
+                    )}
+                  >
+                    <Trophy className="w-4 h-4" />
+                    My History
+                  </button>
+                  {savedConfigs.length > 0 && (
+                    <button 
+                      onClick={() => {
+                        setState('landing');
+                        setTimeout(() => {
+                          document.getElementById('saved-configs')?.scrollIntoView({ behavior: 'smooth' });
+                        }, 100);
+                      }}
+                      className="hover:text-blue-600 transition-colors flex items-center gap-1.5"
+                    >
+                      <Save className="w-4 h-4" />
+                      Saved
+                    </button>
                   )}
-                >
-                  <Trophy className="w-4 h-4" />
-                  My History
-                </button>
+                  <button 
+                    onClick={startResumeBuilder}
+                    className={cn(
+                      "hover:text-blue-600 transition-colors flex items-center gap-1.5",
+                      state === 'resume-builder' && "text-blue-600"
+                    )}
+                  >
+                    <FileText className="w-4 h-4" />
+                    Resume Builder
+                  </button>
+                </>
               )}
             </div>
             
@@ -881,6 +1084,38 @@ Score: ${item.score}/10
                 </div>
 
                 <div className="bg-white p-8 rounded-3xl shadow-xl shadow-blue-900/5 border border-gray-100 space-y-6">
+                  {/* Saved Configs Section - Moved to top for better visibility */}
+                  {user && savedConfigs.length > 0 && (
+                    <div id="saved-configs" className="space-y-3 pb-6 border-b border-gray-100">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                        <Save className="w-3 h-3" />
+                        Quick Start from Saved
+                      </h3>
+                      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                        {savedConfigs.map((saved) => (
+                          <div key={saved.id} className="relative group/card flex-shrink-0">
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => loadSavedConfig(saved)}
+                              className="w-full p-3 bg-blue-50/50 border border-blue-100 rounded-2xl hover:border-blue-300 hover:bg-blue-50 transition-all text-left min-w-[160px]"
+                            >
+                              <p className="font-bold text-gray-900 text-sm truncate pr-4">{saved.name}</p>
+                              <p className="text-[10px] text-blue-600 font-medium">{saved.role}</p>
+                            </motion.button>
+                            <button 
+                              onClick={(e) => deleteSavedConfig(e, saved.id)}
+                              className="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover/card:opacity-100 transition-all bg-white/80 rounded-full"
+                              title="Delete saved configuration"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
@@ -1125,45 +1360,35 @@ Score: ${item.score}/10
                   </div>
                 </div>
 
-              {/* Saved Configs Section */}
-              {user && savedConfigs.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                    <Save className="w-4 h-4" />
-                    Saved Configurations
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3">
-                    {savedConfigs.map((saved) => (
-                      <motion.div
-                        key={saved.id}
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        onClick={() => loadSavedConfig(saved)}
-                        className="group p-4 bg-white border border-gray-100 rounded-2xl hover:border-blue-200 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                            <Briefcase className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <p className="font-bold text-gray-900">{saved.name}</p>
-                            <p className="text-xs text-gray-500">{saved.difficulty} • {saved.persona} Persona</p>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={(e) => deleteSavedConfig(e, saved.id)}
-                          className="p-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </motion.div>
-                    ))}
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-3xl shadow-xl shadow-blue-900/20 text-white space-y-6"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white/20 backdrop-blur-md rounded-xl flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">AI Resume Builder</h3>
+                      <p className="text-blue-100 text-sm">Craft a professional resume in minutes.</p>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                  <p className="text-blue-50/80 text-sm leading-relaxed">
+                    Don't have a resume yet? Our AI will interview you about your background and generate a high-impact, professional resume ready for download.
+                  </p>
+                  <button 
+                    onClick={startResumeBuilder}
+                    className="w-full py-3 bg-white text-blue-600 font-bold rounded-xl hover:bg-blue-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    Start Building
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </motion.div>
+              </div>
 
-            <div className="hidden lg:block relative">
+              <div className="hidden lg:block relative">
                 <div className="absolute -inset-4 bg-blue-100/50 rounded-[40px] blur-3xl -z-10" />
                 <div className="bg-white rounded-[32px] p-6 shadow-2xl border border-gray-100 rotate-2 hover:rotate-0 transition-transform duration-500">
                   <div className="space-y-4">
@@ -1820,6 +2045,114 @@ Score: ${item.score}/10
                   <ArrowRight className="w-5 h-5" />
                 </button>
               </div>
+            </motion.div>
+          )}
+
+          {state === 'resume-builder' && (
+            <motion.div
+              key="resume-builder"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="max-w-3xl mx-auto space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <button 
+                  onClick={() => setState('landing')}
+                  className="flex items-center gap-2 text-gray-500 hover:text-blue-600 transition-colors font-medium"
+                >
+                  <ArrowRight className="w-4 h-4 rotate-180" />
+                  Back to Dashboard
+                </button>
+                <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-full text-sm font-bold">
+                  <FileText className="w-4 h-4" />
+                  AI Resume Builder
+                </div>
+              </div>
+
+              {!finalResumeMarkdown ? (
+                <div className="bg-white rounded-[32px] p-8 shadow-xl border border-gray-100 space-y-8">
+                  <div className="space-y-4">
+                    <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white">
+                      <Bot className="w-6 h-6" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900">Let's build your professional resume</h2>
+                    <p className="text-gray-500">I'll ask you a few questions about your background, experience, and skills to craft a high-impact resume for you.</p>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100 min-h-[100px] flex items-center justify-center text-center">
+                      {isGeneratingResumeQuestion ? (
+                        <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+                      ) : (
+                        <p className="text-lg font-medium text-gray-800">{currentResumeQuestion}</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      <textarea
+                        value={resumeAnswer}
+                        onChange={(e) => setResumeAnswer(e.target.value)}
+                        placeholder="Type your answer here..."
+                        className="w-full p-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all min-h-[120px] resize-none"
+                        disabled={isGeneratingResumeQuestion || isGeneratingFinalResume}
+                      />
+                      <button
+                        onClick={handleResumeAnswer}
+                        disabled={!resumeAnswer.trim() || isGeneratingResumeQuestion || isGeneratingFinalResume}
+                        className="w-full py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {isGeneratingResumeQuestion ? <Loader2 className="w-5 h-5 animate-spin" /> : "Next Question"}
+                        <ArrowRight className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-6 border-t border-gray-100">
+                    <div className="flex items-center justify-between text-xs text-gray-400 font-bold uppercase tracking-widest">
+                      <span>Progress</span>
+                      <span>{resumeQuestions.length} questions answered</span>
+                    </div>
+                    <div className="mt-2 w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-600 transition-all duration-500" 
+                        style={{ width: `${Math.min((resumeQuestions.length / 10) * 100, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-[32px] p-8 shadow-xl border border-gray-100 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <h2 className="text-2xl font-bold text-gray-900">Your AI-Generated Resume</h2>
+                        <p className="text-sm text-gray-500">Review and download your professional resume.</p>
+                      </div>
+                      <button 
+                        onClick={downloadResumePDF}
+                        className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all flex items-center gap-2 shadow-lg shadow-blue-100"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download PDF
+                      </button>
+                    </div>
+
+                    <div className="p-8 bg-gray-50 rounded-2xl border border-gray-100 prose prose-blue max-w-none">
+                      <Markdown>{finalResumeMarkdown}</Markdown>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center">
+                    <button 
+                      onClick={() => setState('landing')}
+                      className="px-8 py-4 bg-white text-gray-600 border border-gray-200 font-bold rounded-2xl hover:bg-gray-50 transition-all"
+                    >
+                      Back to Dashboard
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

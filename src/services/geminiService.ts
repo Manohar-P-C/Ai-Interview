@@ -15,7 +15,7 @@ export interface InterviewConfig {
 
 export interface InterviewQuestion {
   question: string;
-  category: "System Design" | "Data Structures" | "Algorithms" | "Technical" | "Behavioral" | "Situational" | "Leadership" | "Problem Solving";
+  category: "Introductory" | "System Design" | "Data Structures" | "Algorithms" | "Technical" | "Behavioral" | "Situational" | "Leadership" | "Problem Solving" | "Negotiation";
 }
 
 export interface InterviewFeedback {
@@ -64,7 +64,7 @@ export async function generateInitialQuestions(config: InterviewConfig): Promise
     Generate ${questionCount} interview questions for a ${config.role} position at ${config.company} with a difficulty level of ${config.difficulty}. 
     
     CRITICAL INSTRUCTION: The VERY FIRST question MUST be an introductory question like "Tell me about yourself" or "Walk me through your background". 
-    The subsequent questions should be a mix of granular categories such as System Design, Data Structures, Algorithms, Behavioral, Situational, and Leadership where appropriate for the role.${resumeContext}${jdContext}${linkedinContext}`,
+    The subsequent questions should be a mix of granular categories such as System Design, Data Structures, Algorithms, Technical, Behavioral, Situational, Leadership, Problem Solving, and Negotiation where appropriate for the role.${resumeContext}${jdContext}${linkedinContext}`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -190,6 +190,59 @@ export async function generateSpeech(text: string): Promise<string | null> {
     console.error("Speech generation failed", e);
     return null;
   }
+}
+
+export async function generateResumeQuestion(
+  history: { question: string; answer: string }[]
+): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `
+      You are an expert resume builder AI. Your goal is to gather all necessary information from the user to create a professional, high-impact resume.
+      
+      Current conversation history:
+      ${history.length > 0 ? history.map(h => `Q: ${h.question}\nA: ${h.answer}`).join('\n\n') : "No previous history."}
+      
+      Based on the history, ask the NEXT most important question to build a complete resume. 
+      Cover these areas sequentially:
+      1. Contact Information (Name, Email, Phone, Location, LinkedIn/Portfolio)
+      2. Professional Summary or Objective
+      3. Work Experience (Company, Role, Dates, Key Achievements)
+      4. Education (Degree, Institution, Graduation Date)
+      5. Skills (Technical and Soft Skills)
+      6. Projects, Certifications, or Awards (Optional)
+      
+      If you have enough information for a section, move to the next. If you have enough for the entire resume, say "I have all the information I need to build your resume. Would you like me to generate it now?"
+      
+      Keep your questions concise and professional. Ask only ONE question at a time.
+    `,
+  });
+
+  return response.text || "Could you tell me your full name and the professional role you are targeting?";
+}
+
+export async function generateResumeFromAnswers(
+  history: { question: string; answer: string }[]
+): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `
+      You are an expert resume writer. Based on the following information gathered from the user, create a professional, modern, and high-impact resume in Markdown format.
+      
+      Information gathered:
+      ${history.map(h => `Q: ${h.question}\nA: ${h.answer}`).join('\n\n')}
+      
+      Guidelines:
+      - Use clear headings.
+      - Use bullet points for achievements.
+      - Ensure the tone is professional and action-oriented.
+      - Use strong action verbs (e.g., "Spearheaded", "Optimized", "Developed").
+      - Focus on quantifiable results where possible.
+      - The output MUST be clean Markdown.
+    `,
+  });
+
+  return response.text || "Error generating resume.";
 }
 
 export async function generateSuggestion(

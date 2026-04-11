@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { jsPDF } from 'jspdf';
 import { db, auth, type User, handleFirestoreError, OperationType, getDocs, Timestamp } from '../firebase';
 import { collection, query, where, orderBy, doc, getDoc } from 'firebase/firestore';
 import { CalendarDays, Briefcase, Trophy, Bot, Star, X, User as UserIcon, ArrowLeft, Loader2, MessageSquare, Download } from 'lucide-react';
@@ -119,35 +120,53 @@ const HistoryPage: React.FC<HistoryPageProps> = ({ onBack }) => {
   };
 
   const downloadReport = (session: InterviewSession) => {
-    const reportText = `
-INTERVIEW REPORT - ${session.company} (${session.role})
-==================================================
-Date: ${formatDate(session.createdAt)}
-Persona: ${session.persona || 'N/A'}
-Overall Score: ${session.score || 'N/A'}/10
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 20;
+    const contentWidth = pageWidth - 2 * margin;
+    let y = 20;
 
-OVERALL FEEDBACK:
-${typeof session.finalReport === 'string' ? session.finalReport : session.finalReport?.overallFeedback || 'N/A'}
+    const addText = (text: string, fontSize = 12, isBold = false) => {
+      doc.setFontSize(fontSize);
+      doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+      const lines = doc.splitTextToSize(text, contentWidth);
+      
+      if (y + lines.length * (fontSize * 0.5) > doc.internal.pageSize.getHeight() - margin) {
+        doc.addPage();
+        y = margin;
+      }
+      
+      doc.text(lines, margin, y);
+      y += lines.length * (fontSize * 0.5) + 5;
+    };
 
-DETAILED HISTORY:
-${(session.history || []).map((item, index) => `
-Question ${index + 1}: ${item.question}
-Category: ${item.category || 'N/A'}
-Your Answer: ${item.answer}
-Feedback: ${item.feedback}
-Score: ${item.score}/10
-`).join('\n')}
-    `.trim();
+    // Title
+    addText(`INTERVIEW REPORT - ${session.company} (${session.role})`, 18, true);
+    addText(`Date: ${formatDate(session.createdAt)}`, 10);
+    addText(`Persona: ${session.persona || 'N/A'}`, 10);
+    addText(`Overall Score: ${session.score || 'N/A'}/10`, 14, true);
+    y += 5;
 
-    const blob = new Blob([reportText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Interview_Report_${session.company.replace(/\s+/g, '_')}_${session.role.replace(/\s+/g, '_')}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Overall Feedback
+    addText('OVERALL FEEDBACK:', 14, true);
+    const feedback = typeof session.finalReport === 'string' 
+      ? session.finalReport 
+      : session.finalReport?.overallFeedback || 'N/A';
+    addText(feedback, 11);
+    y += 10;
+
+    // Detailed History
+    addText('DETAILED HISTORY:', 14, true);
+    (session.history || []).forEach((item, index) => {
+      addText(`Question ${index + 1}: ${item.question}`, 12, true);
+      addText(`Category: ${item.category || 'N/A'}`, 10);
+      addText(`Your Answer: ${item.answer}`, 11);
+      addText(`Feedback: ${item.feedback}`, 11);
+      addText(`Score: ${item.score}/10`, 11, true);
+      y += 5;
+    });
+
+    doc.save(`Interview_Report_${session.company.replace(/\s+/g, '_')}_${session.role.replace(/\s+/g, '_')}.pdf`);
   };
 
   if (loading) {
