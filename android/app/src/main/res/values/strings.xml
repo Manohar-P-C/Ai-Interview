@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">InterviewAI</string>
+    <string name="title_activity_main">InterviewAI</string>
+    <string name="package_name">com.interviewai.app</string>
+    <string name="custom_url_scheme">com.interviewai.app</string>
+</resources>
